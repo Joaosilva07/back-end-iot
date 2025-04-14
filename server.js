@@ -1,25 +1,28 @@
-require('dotenv').config(); // se usar .env
-
+require('dotenv').config();
 const express = require('express');
 const bodyParser = require('body-parser');
 const session = require('express-session');
 const { Pool } = require('pg');
 const cors = require('cors');
+const bcrypt = require('bcryptjs'); // Para encriptação de senha
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 
-// PostgreSQL: conexão com Pool
+// Configuração do PostgreSQL usando Pool
 const pool = new Pool({
-    host: process.env.DB_HOST ,
-    port: process.env.DB_PORT ,
-    user: process.env.DB_USER ,
-    password: process.env.DB_PASSWORD ,
+    host: process.env.DB_HOST,
+    port: process.env.DB_PORT,
+    user: process.env.DB_USER,
+    password: process.env.DB_PASSWORD,
     database: process.env.DB_DATABASE,
 });
 
-// Middleware
-app.use(cors());
+app.use(cors({
+    origin: '', //  ajustar pra url do front end 
+    methods: 'GET,POST',
+    allowedHeaders: 'Content-Type',
+}));
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(bodyParser.json());
 app.use(session({
@@ -28,21 +31,26 @@ app.use(session({
     saveUninitialized: true
 }));
 
-// Rota de login
 app.post('/login', async (req, res) => {
     const { username, password } = req.body;
 
     try {
         const result = await pool.query(
-            'SELECT * FROM Usuario WHERE email = $1 AND senha = $2',
-            [username, password]
+            'SELECT * FROM Usuario WHERE email = $1',
+            [username]
         );
 
         if (result.rows.length > 0) {
-            req.session.username = result.rows[0].nome;
-            res.json({ success: true, username: result.rows[0].nome });
+            const user = result.rows[0];
+            const match = await bcrypt.compare(password, user.senha);
+            if (match) {
+                req.session.username = user.nome;
+                res.json({ success: true, username: user.nome });
+            } else {
+                res.status(401).json({ success: false, message: 'Senha incorreta' });
+            }
         } else {
-            res.status(401).json({ success: false, message: 'Login inválido' });
+            res.status(401).json({ success: false, message: 'Usuário não encontrado' });
         }
     } catch (err) {
         console.error('Erro ao buscar usuário:', err);
@@ -50,46 +58,52 @@ app.post('/login', async (req, res) => {
     }
 });
 
-// rota register
+
 app.post('/register', async (req, res) => {
-    const { username, password } = req.body;
+    const { username, name, password } = req.body;
     
-    // Verificar se os campos foram preenchidos
-    if (!username || !password) {
-        return res.status(400).send('Usuário e senha são obrigatórios!');
+    if (!username || !password || !name) {
+        return res.status(400).json({ success: false, message: 'Usuário, nome e senha são obrigatórios!' });
     }
 
-    // Verificar se o usuário já existe (simulando com um array)
-    const userExists = users.find(user => user.username === username);
-    if (userExists) {
-        return res.status(400).send('Usuário já existe!');
-    }
+    try {
+        const result = await pool.query('SELECT * FROM Usuario WHERE email = $1', [username]);
+        if (result.rows.length > 0) {
+            return res.status(400).json({ success: false, message: 'Usuário já existe!' });
+        }
 
-    // Encriptar a senha
-    const hashedPassword = await bcrypt.hash(password, 10);
+   
+        const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Salvar usuário (aqui simulando um array, mas no caso de um banco de dados, seria um `INSERT`)
-    const newUser = { username, password: hashedPassword };
-    users.push(newUser);
+    
+        await pool.query(
+            'INSERT INTO Usuario (email, nome, senha) VALUES ($1, $2, $3)',
+            [username, name, hashedPassword]
+        );
 
-    return res.status(201).send('Usuário registrado com sucesso!');
-});
-
-// Rota para obter o nome do usuário logado
-app.get('/user-info', (req, res) => {
-    if (req.session.username) {
-        res.json({ username: req.session.username });
-    } else {
-        res.status(401).json({ message: 'Não autenticado' });
+        res.status(201).json({ success: true, message: 'Usuário registrado com sucesso!' });
+    } catch (err) {
+        console.error('Erro ao registrar usuário:', err);
+        res.status(500).json({ success: false, message: 'Erro no servidor' });
     }
 });
 
-// Rota de logout caso houver
-app.post('/logout', (req, res) => {
-    req.session.destroy();
-    res.json({ success: true });
-});
-
+// Iniciar o servidor
 app.listen(PORT, () => {
     console.log(`✅ Backend rodando em http://localhost:${PORT}`);
 });
+
+
+//Próximos passos:
+
+//Implementar a parte de banco de dados com PostgreSQL para armazenar os usuários.
+
+//Certificar-se de que as credenciais e conexões de banco de dados estão funcionando corretamente.
+
+
+
+
+
+
+
+
